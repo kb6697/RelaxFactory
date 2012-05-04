@@ -8,6 +8,8 @@ import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.channels.ClosedChannelException;
+import java.nio.channels.Pipe;
+import java.nio.channels.SelectionKey;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.Charset;
@@ -15,6 +17,7 @@ import java.text.MessageFormat;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -22,6 +25,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.TimeUnit;
 
 import com.google.gson.FieldNamingPolicy;
@@ -39,9 +43,11 @@ import static java.nio.channels.SelectionKey.OP_CONNECT;
 import static java.nio.channels.SelectionKey.OP_WRITE;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static one.xio.HttpMethod.UTF8;
+import static one.xio.HttpMethod.getSelector;
 import static ro.server.GeoIpIndexRecord.reclen;
 import static ro.server.GeoIpService.IPMASK;
 import static ro.server.GeoIpService.bufAbstraction;
+import static ro.server.GeoIpService.indexMMBuf;
 
 /**
  * User: jim
@@ -76,6 +82,14 @@ public class KernelImpl {
   public static final ConcurrentLinkedQueue<SocketChannel> couchDq = new ConcurrentLinkedQueue<SocketChannel>();
   private static int rbs;
   private static int sbs;
+
+  //prior to executing the RF processor set this in thread from the submit() operation.  needs revision
+  public static final ThreadLocal<String> INSTANCE = new ThreadLocal<String>() {
+    @Override
+    protected String initialValue() {
+      return "rosession";
+    }
+  };
 
   static {
     try {
@@ -131,7 +145,7 @@ public class KernelImpl {
       final InetAddress inet4Address = ThreadLocalInetAddress.get();
       if (null != inet4Address) {
 
-        int i = lookupInetAddress(inet4Address, GeoIpService.indexMMBuf, bufAbstraction);
+        int i = lookupInetAddress(inet4Address, indexMMBuf, bufAbstraction);
         ByteBuffer b = (ByteBuffer) GeoIpService.locationMMBuf.duplicate().clear().position(i);
         while (b.hasRemaining() && '\n' != b.get()) ;
         rtrimByteBuffer(b).position(i);
@@ -233,13 +247,14 @@ public class KernelImpl {
     SocketChannel channel = null;
     while (null == channel && !couchDq.isEmpty()) {
 
-      SocketChannel remove = (SocketChannel) couchDq.remove();
-      if (remove.isConnected() && !channel.socket().isInputShutdown() && !channel.socket().isOutputShutdown()) {
+      SocketChannel remove = couchDq.remove();
+      if (remove.isConnected() && !remove.socket().isInputShutdown() && !remove.socket().isOutputShutdown()) {
         channel = remove;
       }
     }
     if (null == channel) {
-      System.err.println("opening " + new InetSocketAddress(LOOPBACK, 5984).toString());
+      final String s = wheresWaldo();
+      System.err.println("opening " + new InetSocketAddress(LOOPBACK, 5984).toString() + " in " + s);
       channel = SocketChannel.open();
       channel.configureBlocking(false);
       channel.connect(new InetSocketAddress(LOOPBACK, 5984));
@@ -248,6 +263,13 @@ public class KernelImpl {
     return channel;
   }
 
+  private static String wheresWaldo() {
+    final Throwable throwable = new Throwable();
+    final Throwable throwable1 = throwable.fillInStackTrace();
+    final StackTraceElement stackTraceElement = throwable1.getStackTrace()[2];
+    final String s = "\tat " + stackTraceElement.getClassName() + "." + stackTraceElement.getMethodName() + "(" + stackTraceElement.getFileName() + ":" + stackTraceElement.getLineNumber() + ")";
+    return s;
+  }
 
   public static void moveCaretToDoubleEol(ByteBuffer buffer) {
     int distance;
@@ -262,7 +284,7 @@ public class KernelImpl {
     } while (buffer.hasRemaining() && 1 < distance);
   }
 
-  static String deepToString(Object... d) {
+  public static String deepToString(Object... d) {
     return Arrays.deepToString(d);
   }
 
@@ -274,9 +296,13 @@ public class KernelImpl {
   public static int getReceiveBufferSize() {
     if (0 == rbs)
       try {
-        rbs = createCouchConnection().socket().getReceiveBufferSize();
+        final SocketChannel couchConnection = createCouchConnection();
+        rbs = couchConnection.socket().getReceiveBufferSize();
+        recycleChannel(couchConnection);
       } catch (IOException e) {
         e.printStackTrace();  //todo: verify for a purpose
+      } finally {
+        System.err.println("reclaiming couch socket " + wheresWaldo());
       }
 
     return rbs;
@@ -285,12 +311,93 @@ public class KernelImpl {
   public static int getSendBufferSize() {
     if (0 == sbs)
       try {
-        sbs = createCouchConnection().socket().getSendBufferSize();
+        final SocketChannel couchConnection = createCouchConnection();
+        sbs = couchConnection.socket().getSendBufferSize();
+        recycleChannel(couchConnection);
       } catch (IOException e) {
 
 
       }
     return sbs;
+  }
+
+  /**
+   * @param json
+   * @return new _rev
+   */
+  public static CouchTx sendJson(String json, String... idver) throws Exception {
+    String take;
+    SocketChannel channel = null;
+    try {
+      channel = createCouchConnection();
+      SynchronousQueue<String> retVal = new SynchronousQueue<String>();
+      HttpMethod.enqueue(channel, OP_CONNECT | OP_WRITE, new SendJsonVisitor(json, retVal, idver));
+      take = retVal.take();
+    } finally {
+      if (null != channel) {
+        channel.register(getSelector(), 0);
+        couchDq.add(channel);
+      }
+    }
+    return GSON.fromJson(take, CouchTx.class);
+  }
+
+  public static LinkedHashMap fetchMapById(String key) throws IOException, InterruptedException {
+    String take = fetchRecordJsonById(key);
+    LinkedHashMap linkedHashMap = GSON.fromJson(take, LinkedHashMap.class);
+    if (2 == linkedHashMap.size() && linkedHashMap.containsKey("responseCode"))
+      throw new IOException(deepToString(linkedHashMap));
+    return linkedHashMap;
+  }
+
+  public static String fetchRecordJsonById(String path) throws IOException, InterruptedException {
+    SocketChannel channel = createCouchConnection();
+    String take;
+    try {
+      SynchronousQueue<String> retVal = new SynchronousQueue<String>();
+      HttpMethod.enqueue(channel, OP_CONNECT | OP_WRITE, new FetchJsonByIdVisitor(INSTANCE.get() + '/' + path, channel, retVal));
+      take = retVal.take();
+    } finally {
+      recycleChannel(channel);
+    }
+    return take;
+  }
+
+  static Pipe[] getSendPipe(SelectionKey key) throws IOException {
+    final Pipe p = Pipe.open();
+
+    {
+
+      final SocketChannel couchConnection = createCouchConnection();
+      HttpMethod.enqueue(couchConnection, OP_WRITE);
+      final AsioVisitor.Impl couchSide = new AsioVisitor.Impl() {
+        @Override
+        public void onWrite(SelectionKey key) throws Exception {
+          //send request then go OP_READ|
+        }
+
+        @Override
+        public void onRead(SelectionKey key) throws Exception {
+
+          final SocketChannel channel = (SocketChannel) key.channel();
+          final ByteBuffer dst = ByteBuffer.allocateDirect(channel.socket().getReceiveBufferSize());
+          channel.read(dst);
+          final int write = p.sink().write((ByteBuffer) dst.flip());
+
+        }
+
+      };
+      key.interestOps(OP_WRITE).attach(new AsioVisitor.Impl() {
+        @Override
+        public void onWrite(SelectionKey key) throws Exception {
+          final SocketChannel channel = (SocketChannel) key.channel();
+          final ByteBuffer dst = ByteBuffer.allocateDirect(channel.socket().getSendBufferSize());
+          final int read = p.source().read(dst);
+          channel.write((ByteBuffer) dst.flip());
+        }
+      });
+    }
+    return new Pipe[]{p,};
   }
 
   static class ThreadLocalSessionHeaders {
