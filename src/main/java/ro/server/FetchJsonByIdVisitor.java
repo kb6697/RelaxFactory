@@ -20,7 +20,7 @@ import static one.xio.HttpMethod.UTF8;
  * Date: 4/23/12
  * Time: 10:18 PM
  */
-class FetchJsonByIdVisitor extends AsioVisitor.Impl {
+public class FetchJsonByIdVisitor extends AsioVisitor.Impl {
   private final String path;
   private final SocketChannel channel;
   private final SynchronousQueue<String> returnTo;

@@ -77,7 +77,7 @@ public class CouchAgent {
         @Override
         public void run() {
           String id = String.valueOf(couchChange.get("id"));
-          System.err.println("session details changed for the id: " + id);
+          System.err.println("details changed for the id: " + id);
         }
       };
     }

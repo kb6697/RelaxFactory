@@ -83,6 +83,8 @@ public abstract class SessionLocatorVisitor<TxPojo, DataPojo> extends AsioVisito
   }
 
   private void pileOnBufferSegment(SelectionKey key, ByteBuffer dst, int read) throws InterruptedException {
+    if(null==byteBufferLinkedList)byteBufferLinkedList=new LinkedList<ByteBuffer>();
+
     byteBufferLinkedList.add(dst);
     remaining -= read;
     if (remaining < 0) {

@@ -9,6 +9,7 @@ import java.util.concurrent.BlockingQueue;
 import one.xio.HttpMethod;
 import ro.model.RoSession;
 import ro.server.CouchTx;
+import ro.server.KernelImpl;
 
 import static ro.server.KernelImpl.GSON;
 
@@ -30,7 +31,8 @@ public class SessionCreateVisitor extends SessionLocatorVisitor<CouchTx, RoSessi
   public void onWrite(SelectionKey key) throws Exception {
     data = RoSession.createSession();
     String cs = GSON.toJson(data);
-    String format = MessageFormat.format("POST /rosession HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: {0,number,#}\r\n\r\n{1}", cs.length(), cs);
+    String format = MessageFormat.format("POST /" + KernelImpl.INSTANCE.get() +
+        " HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: {0,number,#}\r\n\r\n{1}", cs.length(), cs);
     ByteBuffer encode = HttpMethod.UTF8.encode(format);
     channel.write(encode);
     System.err.println(format);

@@ -32,7 +32,7 @@ import static ro.server.KernelImpl.getReceiveBufferSize;
  */
 public class CouchChangesClient extends AsioVisitor.Impl {
 
-  public String feedname = "example";
+  public String feedname = KernelImpl.INSTANCE.get();  //default
   public Serializable port = 5984;
 
 
@@ -237,7 +237,7 @@ public class CouchChangesClient extends AsioVisitor.Impl {
 
     int i = 0;
     if (i < args.length)
-      couchChangesClient.feedname = args[i++];
+      couchChangesClient.feedname = (args[i++]);
     if (i < args.length)
       couchChangesClient.hostname = args[i++];
     if (i < args.length)

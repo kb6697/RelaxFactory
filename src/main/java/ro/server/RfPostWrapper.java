@@ -44,17 +44,6 @@ import static ro.server.KernelImpl.recycleChannel;
  * Time: 12:37 PM
  */
 class RfPostWrapper extends Impl {
-  public static void main(String... a) {
-    final Pattern compile = Pattern.compile("^/i(/.*)$");
-
-    final String input = "/i/witness/1807e8ec5bcec14842a1a434d300d35c/photo.JPG";
-    final Matcher matcher = compile.matcher(input);
-
-    final boolean matches = matcher.matches();
-    final String group = matcher.group(1);
-    System.err.println("found link: " + group);
-  }
-
   public static final SimpleRequestProcessor SIMPLE_REQUEST_PROCESSOR = new SimpleRequestProcessor(ServiceLayer.create());
 
 
@@ -201,7 +190,7 @@ class RfPostWrapper extends Impl {
 
           long[] remaining = {total - dst.remaining()};
           if (0 == remaining[0]) {
-            KernelImpl.EXECUTOR_SERVICE.submit(new RfProcessTask(headers, dst, key));
+            EXECUTOR_SERVICE.submit(new RfProcessTask(headers, dst, key));
           } else {
             if (dst.capacity() - dst.position() >= total) {
               headers = ByteBuffer.allocate(dst.position()).put(headers);
@@ -391,13 +380,13 @@ class RfPostWrapper extends Impl {
           key.interestOps(OP_READ);
         }
       });
-      key.interestOps(SelectionKey.OP_WRITE);
+      key.interestOps(OP_WRITE);
 
     }
 
     String setOutboundCookies() {
       System.err.println("+++ headers " + UTF8.decode((ByteBuffer) headers.rewind()).toString());
-      Map setCookiesMap = KernelImpl.ThreadLocalSetCookies.get();
+      Map<String, String> setCookiesMap = KernelImpl.ThreadLocalSetCookies.get();
       String sc = "";
       if (null != setCookiesMap && !setCookiesMap.isEmpty()) {
         sc = "";

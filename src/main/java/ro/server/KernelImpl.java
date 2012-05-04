@@ -43,7 +43,6 @@ import static java.nio.channels.SelectionKey.OP_CONNECT;
 import static java.nio.channels.SelectionKey.OP_WRITE;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static one.xio.HttpMethod.UTF8;
-import static one.xio.HttpMethod.getSelector;
 import static ro.server.GeoIpIndexRecord.reclen;
 import static ro.server.GeoIpService.IPMASK;
 import static ro.server.GeoIpService.bufAbstraction;
@@ -87,7 +86,7 @@ public class KernelImpl {
   public static final ThreadLocal<String> INSTANCE = new ThreadLocal<String>() {
     @Override
     protected String initialValue() {
-      return "rosession";
+      return "witness";
     }
   };
 
@@ -335,7 +334,7 @@ public class KernelImpl {
       take = retVal.take();
     } finally {
       if (null != channel) {
-        channel.register(getSelector(), 0);
+        channel.register(HttpMethod.getSelector(), 0);
         couchDq.add(channel);
       }
     }
